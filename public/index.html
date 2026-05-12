@@ -8,7 +8,10 @@
 </head>
 <body>
   <header>
-    <h1>自分の情報</h1>
+    <div class="header-row">
+      <h1>自分の情報</h1>
+      <button type="button" id="open-settings" class="icon-button" aria-label="設定" title="設定">⚙</button>
+    </div>
     <p class="subtitle">テキストと画像で自分の情報をまとめておく場所。各項目は別の項目の下にネストできます。</p>
   </header>
 
@@ -64,6 +67,36 @@
   <div id="viewer" class="viewer hidden">
     <button type="button" id="viewer-close" aria-label="閉じる">×</button>
     <img id="viewer-image" alt="">
+  </div>
+
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>設定</h3>
+        <button type="button" id="settings-close" class="icon-button" aria-label="閉じる">×</button>
+      </div>
+      <div class="modal-body">
+        <label class="setting-row">
+          <input type="checkbox" id="confirm-reveal-toggle">
+          <span>隠した項目を表示する前に確認ポップアップを出す</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>表示の確認</h3>
+      </div>
+      <div class="modal-body">
+        <p>「<span id="confirm-item-name"></span>」を表示します。よろしいですか?</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="confirm-cancel" class="btn-secondary">キャンセル</button>
+        <button type="button" id="confirm-ok" class="primary">表示する</button>
+      </div>
+    </div>
   </div>
 
   <script src="/app.js"></script>

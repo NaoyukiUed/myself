@@ -68,7 +68,8 @@ app.post('/api/items', (req, res) => {
 
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  const base = { id, parentId: normalizedParentId, label: label.trim(), type, createdAt };
+  const hidden = req.body.hidden === true;
+  const base = { id, parentId: normalizedParentId, label: label.trim(), type, hidden, createdAt };
 
   if (type === 'text') {
     const { value } = req.body;
@@ -99,6 +100,20 @@ app.post('/api/items', (req, res) => {
   }
 
   return res.status(400).json({ error: `unknown type: ${type}` });
+});
+
+app.patch('/api/items/:id', (req, res) => {
+  const data = readData();
+  const item = data.items.find((i) => i.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'item not found' });
+  if ('hidden' in req.body) {
+    if (typeof req.body.hidden !== 'boolean') {
+      return res.status(400).json({ error: 'hidden must be a boolean' });
+    }
+    item.hidden = req.body.hidden;
+  }
+  writeData(data);
+  res.json(item);
 });
 
 app.delete('/api/items/:id', (req, res) => {

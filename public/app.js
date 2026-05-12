@@ -16,14 +16,31 @@ const itemsList = document.getElementById('items-list');
 const viewer = document.getElementById('viewer');
 const viewerImage = document.getElementById('viewer-image');
 const viewerClose = document.getElementById('viewer-close');
+const openSettingsBtn = document.getElementById('open-settings');
+const settingsModal = document.getElementById('settings-modal');
+const settingsCloseBtn = document.getElementById('settings-close');
+const confirmRevealToggle = document.getElementById('confirm-reveal-toggle');
+const confirmModal = document.getElementById('confirm-modal');
+const confirmItemName = document.getElementById('confirm-item-name');
+const confirmCancelBtn = document.getElementById('confirm-cancel');
+const confirmOkBtn = document.getElementById('confirm-ok');
 
 const COLLAPSED_KEY = 'myself.collapsed';
+const SETTINGS_KEY = 'myself.settings';
+
 const collapsed = new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]'));
 const saveCollapsed = () => localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed]));
+
+const defaultSettings = { confirmReveal: true };
+const settings = { ...defaultSettings, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+
+const revealedThisSession = new Set();
 
 let items = [];
 let pendingImageDataUrl = null;
 let pendingParentId = null;
+let confirmResolver = null;
 
 const setPendingParent = (item) => {
   pendingParentId = item.id;
@@ -94,14 +111,6 @@ document.addEventListener('paste', (event) => {
 
 clearImageBtn.addEventListener('click', () => setPreview(null));
 
-const formatDate = (iso) => {
-  const d = new Date(iso);
-  return d.toLocaleString('ja-JP', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit',
-  });
-};
-
 const itemPath = (item) => {
   const parts = [];
   let cur = item;
@@ -132,46 +141,74 @@ const descendantIdsOf = (rootId) => {
   return result;
 };
 
-const renderRow = (item, depth) => {
-  const row = document.createElement('div');
-  row.className = 'item';
-  row.dataset.id = item.id;
-  row.style.paddingLeft = `${16 + depth * 24}px`;
+const askConfirmReveal = (item) => new Promise((resolve) => {
+  if (!settings.confirmReveal) {
+    resolve(true);
+    return;
+  }
+  confirmItemName.textContent = item.label;
+  confirmModal.classList.remove('hidden');
+  confirmResolver = resolve;
+});
 
-  const children = childrenOf(item.id);
-  const hasChildren = children.length > 0;
-  const isCollapsed = collapsed.has(item.id);
+const closeConfirmModal = (result) => {
+  confirmModal.classList.add('hidden');
+  if (confirmResolver) {
+    confirmResolver(result);
+    confirmResolver = null;
+  }
+};
 
-  const chevron = document.createElement('button');
-  chevron.type = 'button';
-  chevron.className = `chevron ${hasChildren ? '' : 'invisible'} ${isCollapsed ? 'collapsed' : ''}`;
-  chevron.textContent = '▾';
-  chevron.setAttribute('aria-label', isCollapsed ? '展開' : '折りたたみ');
-  chevron.addEventListener('click', () => {
-    if (!hasChildren) return;
-    if (collapsed.has(item.id)) collapsed.delete(item.id);
-    else collapsed.add(item.id);
-    saveCollapsed();
-    render();
+confirmCancelBtn.addEventListener('click', () => closeConfirmModal(false));
+confirmOkBtn.addEventListener('click', () => closeConfirmModal(true));
+confirmModal.addEventListener('click', (event) => {
+  if (event.target === confirmModal) closeConfirmModal(false);
+});
+
+const openSettings = () => {
+  confirmRevealToggle.checked = settings.confirmReveal;
+  settingsModal.classList.remove('hidden');
+};
+const closeSettings = () => settingsModal.classList.add('hidden');
+
+openSettingsBtn.addEventListener('click', openSettings);
+settingsCloseBtn.addEventListener('click', closeSettings);
+settingsModal.addEventListener('click', (event) => {
+  if (event.target === settingsModal) closeSettings();
+});
+confirmRevealToggle.addEventListener('change', () => {
+  settings.confirmReveal = confirmRevealToggle.checked;
+  saveSettings();
+});
+
+const toggleHidden = async (item) => {
+  const newHidden = !item.hidden;
+  const res = await fetch(`/api/items/${item.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hidden: newHidden }),
   });
-
-  const labelEl = document.createElement('div');
-  labelEl.className = 'item-label';
-  labelEl.textContent = item.label;
-  if (hasChildren) {
-    labelEl.classList.add('clickable');
-    labelEl.addEventListener('click', () => chevron.click());
+  if (!res.ok) {
+    alert('変更に失敗しました');
+    return;
   }
-  if (hasChildren) {
-    const count = document.createElement('span');
-    count.className = 'child-count';
-    count.textContent = `(${children.length})`;
-    labelEl.appendChild(count);
-  }
+  revealedThisSession.delete(item.id);
+  await fetchItems();
+};
 
-  const contentEl = document.createElement('div');
-  contentEl.className = 'item-content';
+const revealItem = async (item) => {
+  const ok = await askConfirmReveal(item);
+  if (!ok) return;
+  revealedThisSession.add(item.id);
+  render();
+};
 
+const remaskItem = (item) => {
+  revealedThisSession.delete(item.id);
+  render();
+};
+
+const renderNormalContent = (item, contentEl) => {
   if (item.type === 'text') {
     const p = document.createElement('p');
     p.className = 'item-text';
@@ -210,6 +247,79 @@ const renderRow = (item, depth) => {
     imageRow.appendChild(actions);
     contentEl.appendChild(imageRow);
   }
+};
+
+const renderRow = (item, depth) => {
+  const row = document.createElement('div');
+  row.className = 'item';
+  row.dataset.id = item.id;
+  row.style.paddingLeft = `${16 + depth * 24}px`;
+
+  const children = childrenOf(item.id);
+  const hasChildren = children.length > 0;
+  const isCollapsed = collapsed.has(item.id);
+
+  const chevron = document.createElement('button');
+  chevron.type = 'button';
+  chevron.className = `chevron ${hasChildren ? '' : 'invisible'} ${isCollapsed ? 'collapsed' : ''}`;
+  chevron.textContent = '▾';
+  chevron.setAttribute('aria-label', isCollapsed ? '展開' : '折りたたみ');
+  chevron.addEventListener('click', () => {
+    if (!hasChildren) return;
+    if (collapsed.has(item.id)) collapsed.delete(item.id);
+    else collapsed.add(item.id);
+    saveCollapsed();
+    render();
+  });
+
+  const labelEl = document.createElement('div');
+  labelEl.className = 'item-label';
+  labelEl.textContent = item.label;
+  if (hasChildren) {
+    labelEl.classList.add('clickable');
+    labelEl.addEventListener('click', () => chevron.click());
+    const count = document.createElement('span');
+    count.className = 'child-count';
+    count.textContent = `(${children.length})`;
+    labelEl.appendChild(count);
+  }
+  if (item.hidden) {
+    const lockBadge = document.createElement('span');
+    lockBadge.className = 'lock-badge';
+    lockBadge.textContent = '🔒';
+    lockBadge.title = '隠してある';
+    labelEl.appendChild(lockBadge);
+  }
+
+  const contentEl = document.createElement('div');
+  contentEl.className = 'item-content';
+
+  const isRevealed = revealedThisSession.has(item.id);
+  if (item.hidden && !isRevealed) {
+    const masked = document.createElement('div');
+    masked.className = 'masked-content';
+    const dots = document.createElement('span');
+    dots.className = 'mask-dots';
+    dots.textContent = item.type === 'image' ? '🔒 隠されている画像' : '••••••';
+    const revealBtn = document.createElement('button');
+    revealBtn.type = 'button';
+    revealBtn.className = 'btn-secondary small';
+    revealBtn.textContent = '表示';
+    revealBtn.addEventListener('click', () => revealItem(item));
+    masked.appendChild(dots);
+    masked.appendChild(revealBtn);
+    contentEl.appendChild(masked);
+  } else {
+    renderNormalContent(item, contentEl);
+    if (item.hidden && isRevealed) {
+      const remaskBtn = document.createElement('button');
+      remaskBtn.type = 'button';
+      remaskBtn.className = 'link-button';
+      remaskBtn.textContent = '再度隠す';
+      remaskBtn.addEventListener('click', () => remaskItem(item));
+      contentEl.appendChild(remaskBtn);
+    }
+  }
 
   const meta = document.createElement('div');
   meta.className = 'item-meta';
@@ -225,6 +335,13 @@ const renderRow = (item, depth) => {
     document.querySelector('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
+  const hideBtn = document.createElement('button');
+  hideBtn.type = 'button';
+  hideBtn.className = 'btn-secondary small';
+  hideBtn.textContent = item.hidden ? '隠す解除' : '隠す';
+  hideBtn.title = item.hidden ? 'hide設定を解除する' : 'この項目を隠す';
+  hideBtn.addEventListener('click', () => toggleHidden(item));
+
   const delBtn = document.createElement('button');
   delBtn.type = 'button';
   delBtn.className = 'btn-danger small';
@@ -232,6 +349,7 @@ const renderRow = (item, depth) => {
   delBtn.addEventListener('click', () => deleteItem(item));
 
   meta.appendChild(addChildBtn);
+  meta.appendChild(hideBtn);
   meta.appendChild(delBtn);
 
   row.appendChild(chevron);
@@ -345,7 +463,10 @@ viewer.addEventListener('click', (event) => {
   if (event.target === viewer) closeViewer();
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !viewer.classList.contains('hidden')) closeViewer();
+  if (event.key !== 'Escape') return;
+  if (!viewer.classList.contains('hidden')) closeViewer();
+  else if (!settingsModal.classList.contains('hidden')) closeSettings();
+  else if (!confirmModal.classList.contains('hidden')) closeConfirmModal(false);
 });
 
 fetchItems();
