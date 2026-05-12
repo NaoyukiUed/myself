@@ -342,7 +342,7 @@ button[type="submit"]:disabled {
 }
 
 .item-text.empty-value::before {
-  content: "(値なし)";
+  content: "-";
 }
 
 .item-image-row {
