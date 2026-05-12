@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>自分の情報</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>自分の情報</h1>
+    <p class="subtitle">テキストと画像で自分の情報をまとめておく場所</p>
+  </header>
+
+  <section class="card">
+    <h2>新しい項目を追加</h2>
+    <form id="add-form">
+      <label class="field">
+        <span class="field-label">項目名</span>
+        <input type="text" id="label-input" placeholder="例: メールアドレス / 運転免許証" required>
+      </label>
+
+      <div class="field">
+        <span class="field-label">タイプ</span>
+        <div class="type-toggle">
+          <label><input type="radio" name="type" value="text" checked> テキスト</label>
+          <label><input type="radio" name="type" value="image"> 画像</label>
+        </div>
+      </div>
+
+      <div id="text-input-area" class="field">
+        <span class="field-label">値</span>
+        <textarea id="text-value" rows="3" placeholder="ここに内容を入力"></textarea>
+      </div>
+
+      <div id="image-input-area" class="field hidden">
+        <span class="field-label">画像</span>
+        <div id="paste-zone" tabindex="0">
+          <span class="paste-hint">ここをクリックして <kbd>Ctrl</kbd>+<kbd>V</kbd> でペースト</span>
+          <img id="paste-preview" class="hidden" alt="preview">
+        </div>
+        <button type="button" id="clear-image" class="link-button hidden">画像をクリア</button>
+      </div>
+
+      <div class="actions">
+        <button type="submit" id="submit-btn">追加</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>登録されている情報</h2>
+    <div id="items-list" class="items-list">
+      <p class="empty">まだ項目はありません。</p>
+    </div>
+  </section>
+
+  <div id="viewer" class="viewer hidden">
+    <button type="button" id="viewer-close" aria-label="閉じる">×</button>
+    <img id="viewer-image" alt="">
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
