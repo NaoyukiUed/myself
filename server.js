@@ -31,19 +31,6 @@ const checkParent = (data, parentId) => {
   return { ok: true };
 };
 
-const wouldCycle = (items, itemId, newParentId) => {
-  let cursor = newParentId;
-  const seen = new Set();
-  while (cursor != null) {
-    if (cursor === itemId) return true;
-    if (seen.has(cursor)) return true;
-    seen.add(cursor);
-    const node = items.find((i) => i.id === cursor);
-    cursor = node ? node.parentId : null;
-  }
-  return false;
-};
-
 const collectDescendantIds = (items, rootId) => {
   const result = [];
   const queue = [rootId];
@@ -112,39 +99,6 @@ app.post('/api/items', (req, res) => {
   }
 
   return res.status(400).json({ error: `unknown type: ${type}` });
-});
-
-app.patch('/api/items/:id', (req, res) => {
-  const data = readData();
-  const item = data.items.find((i) => i.id === req.params.id);
-  if (!item) return res.status(404).json({ error: 'item not found' });
-
-  if ('label' in req.body) {
-    if (typeof req.body.label !== 'string' || req.body.label.trim() === '') {
-      return res.status(400).json({ error: 'label must be a non-empty string' });
-    }
-    item.label = req.body.label.trim();
-  }
-
-  if ('parentId' in req.body) {
-    const newParentId = req.body.parentId ?? null;
-    const parentCheck = checkParent(data, newParentId);
-    if (!parentCheck.ok) return res.status(400).json({ error: parentCheck.error });
-    if (wouldCycle(data.items, item.id, newParentId)) {
-      return res.status(400).json({ error: 'cannot move folder into itself or its descendants' });
-    }
-    item.parentId = newParentId;
-  }
-
-  if ('value' in req.body && item.type === 'text') {
-    if (typeof req.body.value !== 'string') {
-      return res.status(400).json({ error: 'value must be a string' });
-    }
-    item.value = req.body.value;
-  }
-
-  writeData(data);
-  res.json(item);
 });
 
 app.delete('/api/items/:id', (req, res) => {

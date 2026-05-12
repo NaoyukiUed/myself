@@ -1,7 +1,9 @@
 const form = document.getElementById('add-form');
 const labelInput = document.getElementById('label-input');
 const typeRadios = document.querySelectorAll('input[name="type"]');
-const parentSelect = document.getElementById('parent-select');
+const pendingParentBanner = document.getElementById('pending-parent');
+const pendingParentName = document.getElementById('pending-parent-name');
+const clearPendingParentBtn = document.getElementById('clear-pending-parent');
 const textArea = document.getElementById('text-input-area');
 const imageArea = document.getElementById('image-input-area');
 const textValue = document.getElementById('text-value');
@@ -21,6 +23,21 @@ const saveCollapsed = () => localStorage.setItem(COLLAPSED_KEY, JSON.stringify([
 
 let items = [];
 let pendingImageDataUrl = null;
+let pendingParentId = null;
+
+const setPendingParent = (item) => {
+  pendingParentId = item.id;
+  pendingParentName.textContent = itemPath(item);
+  pendingParentBanner.classList.remove('hidden');
+};
+
+const clearPendingParent = () => {
+  pendingParentId = null;
+  pendingParentName.textContent = '';
+  pendingParentBanner.classList.add('hidden');
+};
+
+clearPendingParentBtn.addEventListener('click', clearPendingParent);
 
 const currentType = () => document.querySelector('input[name="type"]:checked').value;
 
@@ -115,59 +132,6 @@ const descendantIdsOf = (rootId) => {
   return result;
 };
 
-const populateParentSelect = (selectEl, excludeId = null) => {
-  const excluded = new Set();
-  if (excludeId) {
-    excluded.add(excludeId);
-    for (const id of descendantIdsOf(excludeId)) excluded.add(id);
-  }
-
-  const options = items
-    .filter((i) => !excluded.has(i.id))
-    .map((i) => ({ id: i.id, path: itemPath(i) }))
-    .sort((a, b) => a.path.localeCompare(b.path, 'ja'));
-
-  const previousValue = selectEl.value;
-  selectEl.innerHTML = '';
-  const rootOption = document.createElement('option');
-  rootOption.value = '';
-  rootOption.textContent = '(ルート)';
-  selectEl.appendChild(rootOption);
-
-  for (const opt of options) {
-    const el = document.createElement('option');
-    el.value = opt.id;
-    el.textContent = opt.path;
-    selectEl.appendChild(el);
-  }
-
-  if ([...selectEl.options].some((o) => o.value === previousValue)) {
-    selectEl.value = previousValue;
-  }
-};
-
-const makeMoveSelect = (item) => {
-  const sel = document.createElement('select');
-  sel.className = 'move-select';
-  sel.title = '移動先';
-  populateParentSelect(sel, item.id);
-  sel.value = item.parentId || '';
-  sel.addEventListener('change', async () => {
-    const newParentId = sel.value === '' ? null : sel.value;
-    const res = await fetch(`/api/items/${item.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parentId: newParentId }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      alert(`移動に失敗しました: ${err.error || res.status}`);
-    }
-    await fetchItems();
-  });
-  return sel;
-};
-
 const renderRow = (item, depth) => {
   const row = document.createElement('div');
   row.className = 'item';
@@ -256,12 +220,10 @@ const renderRow = (item, depth) => {
   addChildBtn.textContent = '＋子を追加';
   addChildBtn.title = `「${item.label}」の下に追加`;
   addChildBtn.addEventListener('click', () => {
-    parentSelect.value = item.id;
+    setPendingParent(item);
     labelInput.focus();
     document.querySelector('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
-
-  const moveSelect = makeMoveSelect(item);
 
   const delBtn = document.createElement('button');
   delBtn.type = 'button';
@@ -270,7 +232,6 @@ const renderRow = (item, depth) => {
   delBtn.addEventListener('click', () => deleteItem(item));
 
   meta.appendChild(addChildBtn);
-  meta.appendChild(moveSelect);
   meta.appendChild(delBtn);
 
   row.appendChild(chevron);
@@ -300,7 +261,12 @@ const render = () => {
   } else {
     renderTree(null, 0, itemsList);
   }
-  populateParentSelect(parentSelect);
+  if (pendingParentId && !items.find((i) => i.id === pendingParentId)) {
+    clearPendingParent();
+  } else if (pendingParentId) {
+    const parent = items.find((i) => i.id === pendingParentId);
+    pendingParentName.textContent = itemPath(parent);
+  }
 };
 
 const fetchItems = async () => {
@@ -331,9 +297,7 @@ form.addEventListener('submit', async (event) => {
   const label = labelInput.value.trim();
   if (!label) return;
   const type = currentType();
-  const parentId = parentSelect.value === '' ? null : parentSelect.value;
-
-  const payload = { label, type, parentId };
+  const payload = { label, type, parentId: pendingParentId };
   if (type === 'text') {
     payload.value = textValue.value;
   } else {
@@ -359,6 +323,7 @@ form.addEventListener('submit', async (event) => {
     labelInput.value = '';
     textValue.value = '';
     setPreview(null);
+    clearPendingParent();
     await fetchItems();
   } finally {
     submitBtn.disabled = false;

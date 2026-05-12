@@ -15,12 +15,11 @@
   <section class="card">
     <h2>新しい項目を追加</h2>
     <form id="add-form">
-      <label class="field">
-        <span class="field-label">親フォルダ</span>
-        <select id="parent-select">
-          <option value="">(ルート)</option>
-        </select>
-      </label>
+      <div id="pending-parent" class="pending-parent hidden">
+        <span class="pending-parent-label">追加先:</span>
+        <strong id="pending-parent-name"></strong>
+        <button type="button" id="clear-pending-parent" aria-label="親なしに戻す">×</button>
+      </div>
 
       <div class="field">
         <span class="field-label">タイプ</span>
