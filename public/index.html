@@ -9,15 +9,17 @@
 <body>
   <header>
     <h1>自分の情報</h1>
-    <p class="subtitle">テキストと画像で自分の情報をまとめておく場所</p>
+    <p class="subtitle">テキストと画像で自分の情報をまとめておく場所。各項目は別の項目の下にネストできます。</p>
   </header>
 
   <section class="card">
     <h2>新しい項目を追加</h2>
     <form id="add-form">
       <label class="field">
-        <span class="field-label">項目名</span>
-        <input type="text" id="label-input" placeholder="例: メールアドレス / 運転免許証" required>
+        <span class="field-label">親フォルダ</span>
+        <select id="parent-select">
+          <option value="">(ルート)</option>
+        </select>
       </label>
 
       <div class="field">
@@ -27,6 +29,11 @@
           <label><input type="radio" name="type" value="image"> 画像</label>
         </div>
       </div>
+
+      <label class="field">
+        <span class="field-label">項目名</span>
+        <input type="text" id="label-input" placeholder="例: メールアドレス / 連絡先" required>
+      </label>
 
       <div id="text-input-area" class="field">
         <span class="field-label">値</span>

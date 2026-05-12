@@ -1,6 +1,7 @@
 const form = document.getElementById('add-form');
 const labelInput = document.getElementById('label-input');
 const typeRadios = document.querySelectorAll('input[name="type"]');
+const parentSelect = document.getElementById('parent-select');
 const textArea = document.getElementById('text-input-area');
 const imageArea = document.getElementById('image-input-area');
 const textValue = document.getElementById('text-value');
@@ -14,18 +15,19 @@ const viewer = document.getElementById('viewer');
 const viewerImage = document.getElementById('viewer-image');
 const viewerClose = document.getElementById('viewer-close');
 
+const COLLAPSED_KEY = 'myself.collapsed';
+const collapsed = new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]'));
+const saveCollapsed = () => localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed]));
+
+let items = [];
 let pendingImageDataUrl = null;
 
 const currentType = () => document.querySelector('input[name="type"]:checked').value;
 
 const updateTypeVisibility = () => {
-  if (currentType() === 'text') {
-    textArea.classList.remove('hidden');
-    imageArea.classList.add('hidden');
-  } else {
-    textArea.classList.add('hidden');
-    imageArea.classList.remove('hidden');
-  }
+  const type = currentType();
+  textArea.classList.toggle('hidden', type !== 'text');
+  imageArea.classList.toggle('hidden', type !== 'image');
 };
 
 typeRadios.forEach((r) => r.addEventListener('change', updateTypeVisibility));
@@ -52,9 +54,9 @@ pasteZone.addEventListener('click', () => pasteZone.focus());
 
 const handlePaste = (event) => {
   if (currentType() !== 'image') return;
-  const items = event.clipboardData && event.clipboardData.items;
-  if (!items) return;
-  for (const item of items) {
+  const clipboardItems = event.clipboardData && event.clipboardData.items;
+  if (!clipboardItems) return;
+  for (const item of clipboardItems) {
     if (item.type && item.type.startsWith('image/')) {
       event.preventDefault();
       const file = item.getAsFile();
@@ -75,15 +77,6 @@ document.addEventListener('paste', (event) => {
 
 clearImageBtn.addEventListener('click', () => setPreview(null));
 
-const escapeHtml = (str) =>
-  str.replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[c]));
-
 const formatDate = (iso) => {
   const d = new Date(iso);
   return d.toLocaleString('ja-JP', {
@@ -92,14 +85,125 @@ const formatDate = (iso) => {
   });
 };
 
-const renderItem = (item) => {
-  const wrapper = document.createElement('div');
-  wrapper.className = 'item';
-  wrapper.dataset.id = item.id;
+const itemPath = (item) => {
+  const parts = [];
+  let cur = item;
+  const safety = new Set();
+  while (cur) {
+    if (safety.has(cur.id)) break;
+    safety.add(cur.id);
+    parts.unshift(cur.label);
+    cur = cur.parentId ? items.find((i) => i.id === cur.parentId) : null;
+  }
+  return parts.join(' / ');
+};
+
+const childrenOf = (parentId) => items.filter((i) => i.parentId === parentId);
+
+const descendantIdsOf = (rootId) => {
+  const result = new Set();
+  const queue = [rootId];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const it of items) {
+      if (it.parentId === cur) {
+        result.add(it.id);
+        queue.push(it.id);
+      }
+    }
+  }
+  return result;
+};
+
+const populateParentSelect = (selectEl, excludeId = null) => {
+  const excluded = new Set();
+  if (excludeId) {
+    excluded.add(excludeId);
+    for (const id of descendantIdsOf(excludeId)) excluded.add(id);
+  }
+
+  const options = items
+    .filter((i) => !excluded.has(i.id))
+    .map((i) => ({ id: i.id, path: itemPath(i) }))
+    .sort((a, b) => a.path.localeCompare(b.path, 'ja'));
+
+  const previousValue = selectEl.value;
+  selectEl.innerHTML = '';
+  const rootOption = document.createElement('option');
+  rootOption.value = '';
+  rootOption.textContent = '(ルート)';
+  selectEl.appendChild(rootOption);
+
+  for (const opt of options) {
+    const el = document.createElement('option');
+    el.value = opt.id;
+    el.textContent = opt.path;
+    selectEl.appendChild(el);
+  }
+
+  if ([...selectEl.options].some((o) => o.value === previousValue)) {
+    selectEl.value = previousValue;
+  }
+};
+
+const makeMoveSelect = (item) => {
+  const sel = document.createElement('select');
+  sel.className = 'move-select';
+  sel.title = '移動先';
+  populateParentSelect(sel, item.id);
+  sel.value = item.parentId || '';
+  sel.addEventListener('change', async () => {
+    const newParentId = sel.value === '' ? null : sel.value;
+    const res = await fetch(`/api/items/${item.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parentId: newParentId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(`移動に失敗しました: ${err.error || res.status}`);
+    }
+    await fetchItems();
+  });
+  return sel;
+};
+
+const renderRow = (item, depth) => {
+  const row = document.createElement('div');
+  row.className = 'item';
+  row.dataset.id = item.id;
+  row.style.paddingLeft = `${16 + depth * 24}px`;
+
+  const children = childrenOf(item.id);
+  const hasChildren = children.length > 0;
+  const isCollapsed = collapsed.has(item.id);
+
+  const chevron = document.createElement('button');
+  chevron.type = 'button';
+  chevron.className = `chevron ${hasChildren ? '' : 'invisible'} ${isCollapsed ? 'collapsed' : ''}`;
+  chevron.textContent = '▾';
+  chevron.setAttribute('aria-label', isCollapsed ? '展開' : '折りたたみ');
+  chevron.addEventListener('click', () => {
+    if (!hasChildren) return;
+    if (collapsed.has(item.id)) collapsed.delete(item.id);
+    else collapsed.add(item.id);
+    saveCollapsed();
+    render();
+  });
 
   const labelEl = document.createElement('div');
   labelEl.className = 'item-label';
   labelEl.textContent = item.label;
+  if (hasChildren) {
+    labelEl.classList.add('clickable');
+    labelEl.addEventListener('click', () => chevron.click());
+  }
+  if (hasChildren) {
+    const count = document.createElement('span');
+    count.className = 'child-count';
+    count.textContent = `(${children.length})`;
+    labelEl.appendChild(count);
+  }
 
   const contentEl = document.createElement('div');
   contentEl.className = 'item-content';
@@ -108,10 +212,11 @@ const renderItem = (item) => {
     const p = document.createElement('p');
     p.className = 'item-text';
     p.textContent = item.value;
+    if (item.value === '') p.classList.add('empty-value');
     contentEl.appendChild(p);
-  } else {
-    const row = document.createElement('div');
-    row.className = 'item-image-row';
+  } else if (item.type === 'image') {
+    const imageRow = document.createElement('div');
+    imageRow.className = 'item-image-row';
 
     const url = `/images/${item.filename}`;
     const img = document.createElement('img');
@@ -128,8 +233,6 @@ const renderItem = (item) => {
     downloadLink.download = item.filename;
     downloadLink.className = 'btn-secondary';
     downloadLink.textContent = 'ダウンロード';
-    downloadLink.style.textDecoration = 'none';
-    downloadLink.style.textAlign = 'center';
 
     const viewBtn = document.createElement('button');
     viewBtn.type = 'button';
@@ -139,63 +242,88 @@ const renderItem = (item) => {
 
     actions.appendChild(downloadLink);
     actions.appendChild(viewBtn);
-
-    row.appendChild(img);
-    row.appendChild(actions);
-    contentEl.appendChild(row);
+    imageRow.appendChild(img);
+    imageRow.appendChild(actions);
+    contentEl.appendChild(imageRow);
   }
 
   const meta = document.createElement('div');
   meta.className = 'item-meta';
 
-  const created = document.createElement('span');
-  created.className = 'item-created';
-  created.textContent = formatDate(item.createdAt);
+  const addChildBtn = document.createElement('button');
+  addChildBtn.type = 'button';
+  addChildBtn.className = 'btn-secondary small';
+  addChildBtn.textContent = '＋子を追加';
+  addChildBtn.title = `「${item.label}」の下に追加`;
+  addChildBtn.addEventListener('click', () => {
+    parentSelect.value = item.id;
+    labelInput.focus();
+    document.querySelector('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  const moveSelect = makeMoveSelect(item);
 
   const delBtn = document.createElement('button');
   delBtn.type = 'button';
-  delBtn.className = 'btn-danger';
+  delBtn.className = 'btn-danger small';
   delBtn.textContent = '削除';
-  delBtn.addEventListener('click', () => deleteItem(item.id));
+  delBtn.addEventListener('click', () => deleteItem(item));
 
-  meta.appendChild(created);
+  meta.appendChild(addChildBtn);
+  meta.appendChild(moveSelect);
   meta.appendChild(delBtn);
 
-  wrapper.appendChild(labelEl);
-  wrapper.appendChild(contentEl);
-  wrapper.appendChild(meta);
-
-  return wrapper;
+  row.appendChild(chevron);
+  row.appendChild(labelEl);
+  row.appendChild(contentEl);
+  row.appendChild(meta);
+  return row;
 };
 
-const renderItems = (items) => {
+const renderTree = (parentId, depth, container) => {
+  const children = childrenOf(parentId).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  for (const child of children) {
+    container.appendChild(renderRow(child, depth));
+    if (!collapsed.has(child.id)) {
+      renderTree(child.id, depth + 1, container);
+    }
+  }
+};
+
+const render = () => {
   itemsList.innerHTML = '';
   if (items.length === 0) {
     const p = document.createElement('p');
     p.className = 'empty';
     p.textContent = 'まだ項目はありません。';
     itemsList.appendChild(p);
-    return;
+  } else {
+    renderTree(null, 0, itemsList);
   }
-  const sorted = [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  sorted.forEach((item) => itemsList.appendChild(renderItem(item)));
+  populateParentSelect(parentSelect);
 };
 
 const fetchItems = async () => {
   const res = await fetch('/api/items');
   if (!res.ok) throw new Error(`failed to fetch items: ${res.status}`);
-  const items = await res.json();
-  renderItems(items);
+  items = await res.json();
+  render();
 };
 
-const deleteItem = async (id) => {
-  if (!confirm('この項目を削除しますか?')) return;
-  const res = await fetch(`/api/items/${id}`, { method: 'DELETE' });
+const deleteItem = async (item) => {
+  const descCount = descendantIdsOf(item.id).size;
+  const msg = descCount > 0
+    ? `「${item.label}」とその配下 ${descCount} 項目を削除しますか? この操作は取り消せません。`
+    : `「${item.label}」を削除しますか?`;
+  if (!confirm(msg)) return;
+  const res = await fetch(`/api/items/${item.id}`, { method: 'DELETE' });
   if (!res.ok) {
     alert('削除に失敗しました');
     return;
   }
-  fetchItems();
+  collapsed.delete(item.id);
+  saveCollapsed();
+  await fetchItems();
 };
 
 form.addEventListener('submit', async (event) => {
@@ -203,8 +331,9 @@ form.addEventListener('submit', async (event) => {
   const label = labelInput.value.trim();
   if (!label) return;
   const type = currentType();
+  const parentId = parentSelect.value === '' ? null : parentSelect.value;
 
-  const payload = { label, type };
+  const payload = { label, type, parentId };
   if (type === 'text') {
     payload.value = textValue.value;
   } else {

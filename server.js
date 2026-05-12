@@ -24,6 +24,41 @@ const EXT_BY_MIME = {
   'image/svg+xml': 'svg',
 };
 
+const checkParent = (data, parentId) => {
+  if (parentId === null || parentId === undefined) return { ok: true };
+  const parent = data.items.find((i) => i.id === parentId);
+  if (!parent) return { ok: false, error: `parent not found: ${parentId}` };
+  return { ok: true };
+};
+
+const wouldCycle = (items, itemId, newParentId) => {
+  let cursor = newParentId;
+  const seen = new Set();
+  while (cursor != null) {
+    if (cursor === itemId) return true;
+    if (seen.has(cursor)) return true;
+    seen.add(cursor);
+    const node = items.find((i) => i.id === cursor);
+    cursor = node ? node.parentId : null;
+  }
+  return false;
+};
+
+const collectDescendantIds = (items, rootId) => {
+  const result = [];
+  const queue = [rootId];
+  while (queue.length) {
+    const current = queue.shift();
+    for (const item of items) {
+      if (item.parentId === current) {
+        result.push(item.id);
+        queue.push(item.id);
+      }
+    }
+  }
+  return result;
+};
+
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(PUBLIC_DIR));
@@ -34,21 +69,26 @@ app.get('/api/items', (req, res) => {
 });
 
 app.post('/api/items', (req, res) => {
-  const { label, type } = req.body;
+  const { label, type, parentId } = req.body;
   if (typeof label !== 'string' || label.trim() === '') {
     return res.status(400).json({ error: 'label is required' });
   }
 
+  const data = readData();
+  const normalizedParentId = parentId ?? null;
+  const parentCheck = checkParent(data, normalizedParentId);
+  if (!parentCheck.ok) return res.status(400).json({ error: parentCheck.error });
+
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  const data = readData();
+  const base = { id, parentId: normalizedParentId, label: label.trim(), type, createdAt };
 
   if (type === 'text') {
     const { value } = req.body;
     if (typeof value !== 'string') {
       return res.status(400).json({ error: 'text value must be a string' });
     }
-    const item = { id, label: label.trim(), type, value, createdAt };
+    const item = { ...base, value };
     data.items.push(item);
     writeData(data);
     return res.json(item);
@@ -62,12 +102,10 @@ app.post('/api/items', (req, res) => {
     }
     const mime = match[1];
     const ext = EXT_BY_MIME[mime];
-    if (!ext) {
-      return res.status(400).json({ error: `unsupported image mime type: ${mime}` });
-    }
+    if (!ext) return res.status(400).json({ error: `unsupported image mime type: ${mime}` });
     const filename = `${id}.${ext}`;
     fs.writeFileSync(path.join(IMAGES_DIR, filename), Buffer.from(match[2], 'base64'));
-    const item = { id, label: label.trim(), type, filename, mime, createdAt };
+    const item = { ...base, filename, mime };
     data.items.push(item);
     writeData(data);
     return res.json(item);
@@ -76,17 +114,54 @@ app.post('/api/items', (req, res) => {
   return res.status(400).json({ error: `unknown type: ${type}` });
 });
 
+app.patch('/api/items/:id', (req, res) => {
+  const data = readData();
+  const item = data.items.find((i) => i.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'item not found' });
+
+  if ('label' in req.body) {
+    if (typeof req.body.label !== 'string' || req.body.label.trim() === '') {
+      return res.status(400).json({ error: 'label must be a non-empty string' });
+    }
+    item.label = req.body.label.trim();
+  }
+
+  if ('parentId' in req.body) {
+    const newParentId = req.body.parentId ?? null;
+    const parentCheck = checkParent(data, newParentId);
+    if (!parentCheck.ok) return res.status(400).json({ error: parentCheck.error });
+    if (wouldCycle(data.items, item.id, newParentId)) {
+      return res.status(400).json({ error: 'cannot move folder into itself or its descendants' });
+    }
+    item.parentId = newParentId;
+  }
+
+  if ('value' in req.body && item.type === 'text') {
+    if (typeof req.body.value !== 'string') {
+      return res.status(400).json({ error: 'value must be a string' });
+    }
+    item.value = req.body.value;
+  }
+
+  writeData(data);
+  res.json(item);
+});
+
 app.delete('/api/items/:id', (req, res) => {
   const data = readData();
   const idx = data.items.findIndex((i) => i.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'item not found' });
-  const [removed] = data.items.splice(idx, 1);
-  if (removed.type === 'image') {
-    const filepath = path.join(IMAGES_DIR, removed.filename);
-    if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+  const target = data.items[idx];
+  const idsToDelete = new Set([target.id, ...collectDescendantIds(data.items, target.id)]);
+  for (const it of data.items) {
+    if (idsToDelete.has(it.id) && it.type === 'image') {
+      const filepath = path.join(IMAGES_DIR, it.filename);
+      if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+    }
   }
+  data.items = data.items.filter((i) => !idsToDelete.has(i.id));
   writeData(data);
-  res.json({ ok: true });
+  res.json({ ok: true, deletedCount: idsToDelete.size });
 });
 
 app.listen(PORT, () => {
